@@ -1,0 +1,705 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
+import sqlite3
+import os
+from datetime import datetime, timedelta
+
+                                                                                
+
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "library.db")
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS books (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            title     TEXT NOT NULL,
+            author    TEXT NOT NULL,
+            isbn      TEXT UNIQUE,
+            genre     TEXT,
+            year      INTEGER,
+            copies    INTEGER DEFAULT 1,
+            available INTEGER DEFAULT 1
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS members (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            name    TEXT NOT NULL,
+            email   TEXT UNIQUE,
+            phone   TEXT,
+            joined  TEXT DEFAULT (date('now'))
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS issues (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id     INTEGER REFERENCES books(id),
+            member_id   INTEGER REFERENCES members(id),
+            issue_date  TEXT DEFAULT (date('now')),
+            due_date    TEXT,
+            return_date TEXT
+        )
+    """)
+                               
+    if not c.execute("SELECT 1 FROM books LIMIT 1").fetchone():
+        sample_books = [
+            ("The Great Gatsby",      "F. Scott Fitzgerald", "9780743273565", "Fiction",    1925, 3, 3),
+            ("To Kill a Mockingbird", "Harper Lee",          "9780061935466", "Fiction",    1960, 2, 2),
+            ("1984",                  "George Orwell",       "9780451524935", "Dystopia",   1949, 4, 4),
+            ("Sapiens",               "Yuval Noah Harari",   "9780062316097", "Non-Fiction",2011, 2, 2),
+            ("The Alchemist",         "Paulo Coelho",        "9780062315007", "Fiction",    1988, 3, 3),
+            ("Dune",                  "Frank Herbert",       "9780441013593", "Sci-Fi",     1965, 2, 2),
+        ]
+        c.executemany(
+            "INSERT INTO books (title,author,isbn,genre,year,copies,available) VALUES (?,?,?,?,?,?,?)",
+            sample_books
+        )
+        sample_members = [
+            ("Aarav Sharma",  "aarav@example.com",  "9876543210"),
+            ("Priya Mehta",   "priya@example.com",  "9123456780"),
+            ("Rohan Gupta",   "rohan@example.com",  "9988776655"),
+        ]
+        c.executemany(
+            "INSERT INTO members (name,email,phone) VALUES (?,?,?)",
+            sample_members
+        )
+    conn.commit()
+    conn.close()
+
+def get_conn():
+    return sqlite3.connect(DB_PATH)
+
+                                                                                
+
+BG       = "#0F1117"
+SIDEBAR  = "#161B27"
+CARD     = "#1E2435"
+ACCENT   = "#4F8EF7"
+ACCENT2  = "#6FCFB0"
+DANGER   = "#E05C6A"
+TEXT     = "#E8EAF0"
+SUBTEXT  = "#8892A4"
+BORDER   = "#2A3147"
+ROW_ODD  = "#1A2030"
+ROW_EVEN = "#1E2840"
+
+FONT_H1  = ("Georgia", 22, "bold")
+FONT_H2  = ("Georgia", 14, "bold")
+FONT_NAV = ("Helvetica", 11, "bold")
+FONT_BODY= ("Helvetica", 10)
+FONT_SM  = ("Helvetica", 9)
+
+                                                                                
+
+def styled_btn(parent, text, cmd, color=ACCENT, fg=BG, **kw):
+    b = tk.Button(parent, text=text, command=cmd, bg=color, fg=fg,
+                  font=FONT_NAV, relief="flat", cursor="hand2",
+                  padx=14, pady=6, **kw)
+    b.bind("<Enter>", lambda e: b.config(bg=_lighten(color)))
+    b.bind("<Leave>", lambda e: b.config(bg=color))
+    return b
+
+def _lighten(hex_color):
+    r,g,b = int(hex_color[1:3],16), int(hex_color[3:5],16), int(hex_color[5:7],16)
+    r,g,b = min(255,r+30), min(255,g+30), min(255,b+30)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+def card_frame(parent, **kw):
+    return tk.Frame(parent, bg=CARD, relief="flat", **kw)
+
+def label(parent, text, font=FONT_BODY, fg=TEXT, **kw):
+    return tk.Label(parent, text=text, bg=parent["bg"], fg=fg, font=font, **kw)
+
+def entry_field(parent, textvariable=None, width=28):
+    e = tk.Entry(parent, textvariable=textvariable, width=width,
+                 bg=BORDER, fg=TEXT, insertbackground=TEXT,
+                 relief="flat", font=FONT_BODY)
+    e.config(highlightthickness=1, highlightbackground=BORDER,
+             highlightcolor=ACCENT)
+    return e
+
+def combo_field(parent, values, textvariable=None, width=26):
+    style = ttk.Style()
+    style.theme_use("clam")
+    style.configure("Dark.TCombobox",
+                    fieldbackground=BORDER, background=CARD,
+                    foreground=TEXT, arrowcolor=ACCENT,
+                    selectbackground=ACCENT, selectforeground=BG)
+    c = ttk.Combobox(parent, values=values, textvariable=textvariable,
+                     width=width, style="Dark.TCombobox", font=FONT_BODY,
+                     state="readonly")
+    return c
+
+def build_tree(parent, columns, col_widths):
+    style = ttk.Style()
+    style.configure("Dark.Treeview",
+                    background=ROW_ODD, foreground=TEXT,
+                    fieldbackground=ROW_ODD, rowheight=28,
+                    font=FONT_BODY)
+    style.configure("Dark.Treeview.Heading",
+                    background=CARD, foreground=ACCENT,
+                    font=("Helvetica", 10, "bold"), relief="flat")
+    style.map("Dark.Treeview",
+              background=[("selected", ACCENT)],
+              foreground=[("selected", BG)])
+
+    frame = tk.Frame(parent, bg=BG)
+    frame.pack(fill="both", expand=True, pady=(8,0))
+
+    vsb = ttk.Scrollbar(frame, orient="vertical")
+    hsb = ttk.Scrollbar(frame, orient="horizontal")
+    tree = ttk.Treeview(frame, columns=columns, show="headings",
+                        style="Dark.Treeview",
+                        yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+    vsb.config(command=tree.yview)
+    hsb.config(command=tree.xview)
+    vsb.pack(side="right", fill="y")
+    hsb.pack(side="bottom", fill="x")
+    tree.pack(fill="both", expand=True)
+
+    for col, w in zip(columns, col_widths):
+        tree.heading(col, text=col)
+        tree.column(col, width=w, anchor="center")
+
+    tree.tag_configure("odd",  background=ROW_ODD)
+    tree.tag_configure("even", background=ROW_EVEN)
+    return tree
+
+                                                                                
+
+class LibraryApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("📚  Library Management System")
+        self.geometry("1180x700")
+        self.minsize(900, 600)
+        self.configure(bg=BG)
+        init_db()
+        self._build_ui()
+
+    def _build_ui(self):
+                       
+        sidebar = tk.Frame(self, bg=SIDEBAR, width=200)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+
+        logo_f = tk.Frame(sidebar, bg=SIDEBAR)
+        logo_f.pack(pady=(28, 20), padx=16)
+        tk.Label(logo_f, text="📚", font=("Helvetica", 32), bg=SIDEBAR).pack()
+        tk.Label(logo_f, text="LibraryMS", font=("Georgia", 14, "bold"),
+                 fg=ACCENT, bg=SIDEBAR).pack()
+        tk.Label(logo_f, text="Management System", font=FONT_SM,
+                 fg=SUBTEXT, bg=SIDEBAR).pack()
+
+        ttk.Separator(sidebar, orient="horizontal").pack(fill="x", padx=12)
+
+        self.content = tk.Frame(self, bg=BG)
+        self.content.pack(side="right", fill="both", expand=True)
+
+        self.pages: dict[str, tk.Frame] = {}
+        nav_items = [
+            ("🏠  Dashboard",  "dashboard",  self._page_dashboard),
+            ("📖  Books",      "books",      self._page_books),
+            ("👤  Members",    "members",    self._page_members),
+            ("🔄  Issue/Return","issues",    self._page_issues),
+            ("📋  History",    "history",    self._page_history),
+        ]
+
+        self._nav_buttons = {}
+        for label_txt, key, builder in nav_items:
+            btn = tk.Button(
+                sidebar, text=label_txt, anchor="w",
+                font=FONT_NAV, relief="flat", cursor="hand2",
+                bg=SIDEBAR, fg=SUBTEXT, padx=20, pady=12,
+                command=lambda k=key, b=builder: self._show_page(k, b)
+            )
+            btn.pack(fill="x")
+            btn.bind("<Enter>", lambda e, b=btn: b.config(fg=TEXT, bg=BORDER))
+            btn.bind("<Leave>", lambda e, b=btn, k=key: (
+                b.config(fg=TEXT if self._active==k else SUBTEXT,
+                         bg=ACCENT if self._active==k else SIDEBAR)))
+            self._nav_buttons[key] = btn
+
+        self._active = ""
+        self._show_page("dashboard", self._page_dashboard)
+
+    def _show_page(self, key, builder):
+        for w in self.content.winfo_children():
+            w.destroy()
+        self.pages.clear()
+
+        if self._active and self._active in self._nav_buttons:
+            self._nav_buttons[self._active].config(bg=SIDEBAR, fg=SUBTEXT)
+        self._active = key
+        self._nav_buttons[key].config(bg=ACCENT, fg=BG)
+        builder()
+
+                                                                                
+
+    def _page_dashboard(self):
+        page = tk.Frame(self.content, bg=BG)
+        page.pack(fill="both", expand=True, padx=30, pady=20)
+
+        label(page, "Dashboard", font=FONT_H1).pack(anchor="w")
+        label(page, "Welcome back — here's a quick overview.", fg=SUBTEXT).pack(anchor="w")
+
+        tk.Frame(page, bg=BORDER, height=1).pack(fill="x", pady=14)
+
+                    
+        conn = get_conn(); c = conn.cursor()
+        total_books   = c.execute("SELECT COUNT(*) FROM books").fetchone()[0]
+        avail_books   = c.execute("SELECT SUM(available) FROM books").fetchone()[0] or 0
+        total_members = c.execute("SELECT COUNT(*) FROM members").fetchone()[0]
+        active_issues = c.execute(
+            "SELECT COUNT(*) FROM issues WHERE return_date IS NULL").fetchone()[0]
+        overdue       = c.execute(
+            "SELECT COUNT(*) FROM issues WHERE return_date IS NULL AND due_date < date('now')"
+        ).fetchone()[0]
+        conn.close()
+
+        stats = [
+            ("📚", "Total Books",    total_books,   ACCENT),
+            ("✅", "Available",      avail_books,   ACCENT2),
+            ("👤", "Members",        total_members, "#A78BFA"),
+            ("🔄", "Active Issues",  active_issues, "#FBBF24"),
+            ("⚠️", "Overdue",        overdue,       DANGER),
+        ]
+
+        row = tk.Frame(page, bg=BG)
+        row.pack(fill="x", pady=4)
+        for icon, title, val, color in stats:
+            c_frame = card_frame(row, padx=20, pady=18)
+            c_frame.pack(side="left", expand=True, fill="both", padx=6)
+            tk.Label(c_frame, text=icon, font=("Helvetica", 22), bg=CARD).pack()
+            tk.Label(c_frame, text=str(val), font=("Georgia", 26, "bold"),
+                     fg=color, bg=CARD).pack()
+            tk.Label(c_frame, text=title, font=FONT_SM, fg=SUBTEXT, bg=CARD).pack()
+
+                         
+        tk.Frame(page, bg=BORDER, height=1).pack(fill="x", pady=18)
+        label(page, "Recent Issues", font=FONT_H2).pack(anchor="w", pady=(0,8))
+
+        cols = ("Book Title", "Member", "Issue Date", "Due Date", "Status")
+        widths = (260, 160, 110, 110, 100)
+        tree = build_tree(page, cols, widths)
+
+        conn = get_conn()
+        rows = conn.execute("""
+            SELECT b.title, m.name, i.issue_date, i.due_date, i.return_date
+            FROM issues i
+            JOIN books b ON b.id=i.book_id
+            JOIN members m ON m.id=i.member_id
+            ORDER BY i.id DESC LIMIT 20
+        """).fetchall()
+        conn.close()
+
+        for idx, r in enumerate(rows):
+            status = "Returned" if r[4] else (
+                "Overdue" if r[3] and r[3] < datetime.now().strftime("%Y-%m-%d")
+                else "Issued")
+            tag = "odd" if idx % 2 == 0 else "even"
+            tree.insert("", "end",
+                        values=(r[0], r[1], r[2], r[3] or "—", status),
+                        tags=(tag,))
+
+                                                                                 
+
+    def _page_books(self):
+        page = tk.Frame(self.content, bg=BG)
+        page.pack(fill="both", expand=True, padx=30, pady=20)
+
+                
+        hdr = tk.Frame(page, bg=BG)
+        hdr.pack(fill="x")
+        label(hdr, "Books", font=FONT_H1).pack(side="left")
+        styled_btn(hdr, "+ Add Book", self._add_book_dialog).pack(side="right", pady=4)
+
+                    
+        sf = tk.Frame(page, bg=BG)
+        sf.pack(fill="x", pady=10)
+        self._book_search = tk.StringVar()
+        se = entry_field(sf, self._book_search, width=40)
+        se.pack(side="left")
+        se.insert(0, "Search books…")
+        se.bind("<FocusIn>",  lambda e: (se.delete(0,"end") if se.get()=="Search books…" else None))
+        se.bind("<FocusOut>", lambda e: (se.insert(0,"Search books…") if not se.get() else None))
+        styled_btn(sf, "Search", lambda: self._refresh_books(self._book_search.get()), ACCENT2, BG).pack(side="left", padx=8)
+        styled_btn(sf, "Show All", lambda: self._refresh_books(""), BORDER, TEXT).pack(side="left")
+
+              
+        cols = ("#", "Title", "Author", "Genre", "Year", "Copies", "Available", "Actions")
+        widths = (40, 250, 160, 100, 60, 70, 80, 120)
+        self._books_tree = build_tree(page, cols, widths)
+        self._books_tree.bind("<Double-1>", self._book_row_action)
+        self._refresh_books("")
+
+    def _refresh_books(self, q=""):
+        tree = self._books_tree
+        for row in tree.get_children():
+            tree.delete(row)
+        conn = get_conn()
+        if q and q != "Search books…":
+            rows = conn.execute(
+                "SELECT id,title,author,genre,year,copies,available FROM books "
+                "WHERE title LIKE ? OR author LIKE ? OR genre LIKE ?",
+                (f"%{q}%",)*3
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id,title,author,genre,year,copies,available FROM books"
+            ).fetchall()
+        conn.close()
+        for idx, r in enumerate(rows):
+            tag = "odd" if idx%2==0 else "even"
+            tree.insert("", "end",
+                        values=(r[0], r[1], r[2], r[3] or "—", r[4] or "—",
+                                r[5], r[6], "Edit | Delete"),
+                        tags=(tag,))
+
+    def _book_row_action(self, event):
+        tree = self._books_tree
+        item = tree.focus()
+        if not item: return
+        col = tree.identify_column(event.x)
+        vals = tree.item(item)["values"]
+        book_id = vals[0]
+        if col == "#8":                  
+            x = event.x_root; y = event.y_root
+            menu = tk.Menu(self, tearoff=0, bg=CARD, fg=TEXT,
+                           activebackground=ACCENT, activeforeground=BG)
+            menu.add_command(label="✏️  Edit",   command=lambda: self._edit_book_dialog(book_id))
+            menu.add_command(label="🗑  Delete", command=lambda: self._delete_book(book_id))
+            menu.post(x, y)
+
+    def _add_book_dialog(self):
+        self._book_form_dialog("Add New Book")
+
+    def _edit_book_dialog(self, book_id):
+        conn = get_conn()
+        r = conn.execute("SELECT * FROM books WHERE id=?", (book_id,)).fetchone()
+        conn.close()
+        if r:
+            self._book_form_dialog("Edit Book", r)
+
+    def _book_form_dialog(self, title, data=None):
+        dlg = tk.Toplevel(self)
+        dlg.title(title)
+        dlg.configure(bg=CARD)
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        w, h = 440, 420
+        dlg.geometry(f"{w}x{h}+{self.winfo_x()+350}+{self.winfo_y()+150}")
+
+        label(dlg, title, font=FONT_H2).pack(pady=(20,10))
+
+        fields = [("Title*", "title"), ("Author*", "author"), ("ISBN", "isbn"),
+                  ("Genre", "genre"), ("Year", "year"), ("Copies", "copies")]
+        vars_ = {}
+        form = tk.Frame(dlg, bg=CARD)
+        form.pack(padx=30, fill="x")
+        for i, (lbl, key) in enumerate(fields):
+            tk.Label(form, text=lbl, bg=CARD, fg=SUBTEXT, font=FONT_SM).grid(
+                row=i, column=0, sticky="w", pady=5)
+            v = tk.StringVar()
+            if data:
+                v.set(data[i+1] if data[i+1] is not None else "")
+            entry_field(form, v, 26).grid(row=i, column=1, padx=(10,0), sticky="ew")
+            vars_[key] = v
+
+        def save():
+            t = vars_["title"].get().strip()
+            a = vars_["author"].get().strip()
+            if not t or not a:
+                messagebox.showwarning("Required", "Title and Author are required.", parent=dlg)
+                return
+            try:
+                year = int(vars_["year"].get()) if vars_["year"].get() else None
+                copies = int(vars_["copies"].get()) if vars_["copies"].get() else 1
+            except ValueError:
+                messagebox.showwarning("Invalid", "Year and Copies must be numbers.", parent=dlg)
+                return
+            conn = get_conn(); c = conn.cursor()
+            if data:
+                c.execute("""UPDATE books SET title=?,author=?,isbn=?,genre=?,
+                             year=?,copies=?,available=? WHERE id=?""",
+                          (t, a, vars_["isbn"].get() or None,
+                           vars_["genre"].get() or None, year, copies,
+                           min(copies, data[7]), data[0]))
+            else:
+                c.execute("""INSERT INTO books (title,author,isbn,genre,year,copies,available)
+                             VALUES (?,?,?,?,?,?,?)""",
+                          (t, a, vars_["isbn"].get() or None,
+                           vars_["genre"].get() or None, year, copies, copies))
+            conn.commit(); conn.close()
+            dlg.destroy()
+            self._refresh_books("")
+
+        styled_btn(dlg, "💾  Save", save).pack(pady=18)
+
+    def _delete_book(self, book_id):
+        if messagebox.askyesno("Confirm", "Delete this book permanently?"):
+            conn = get_conn()
+            conn.execute("DELETE FROM books WHERE id=?", (book_id,))
+            conn.commit(); conn.close()
+            self._refresh_books("")
+
+                                                                                 
+
+    def _page_members(self):
+        page = tk.Frame(self.content, bg=BG)
+        page.pack(fill="both", expand=True, padx=30, pady=20)
+
+        hdr = tk.Frame(page, bg=BG)
+        hdr.pack(fill="x")
+        label(hdr, "Members", font=FONT_H1).pack(side="left")
+        styled_btn(hdr, "+ Add Member", self._add_member_dialog).pack(side="right", pady=4)
+
+        sf = tk.Frame(page, bg=BG); sf.pack(fill="x", pady=10)
+        self._member_search = tk.StringVar()
+        se = entry_field(sf, self._member_search, 40); se.pack(side="left")
+        se.insert(0, "Search members…")
+        se.bind("<FocusIn>",  lambda e: (se.delete(0,"end") if se.get()=="Search members…" else None))
+        se.bind("<FocusOut>", lambda e: (se.insert(0,"Search members…") if not se.get() else None))
+        styled_btn(sf, "Search", lambda: self._refresh_members(self._member_search.get()), ACCENT2, BG).pack(side="left", padx=8)
+        styled_btn(sf, "Show All", lambda: self._refresh_members(""), BORDER, TEXT).pack(side="left")
+
+        cols = ("#", "Name", "Email", "Phone", "Joined", "Active Issues")
+        widths = (40, 180, 200, 130, 100, 110)
+        self._members_tree = build_tree(page, cols, widths)
+        self._members_tree.bind("<Double-1>", self._member_row_action)
+        self._refresh_members("")
+
+    def _refresh_members(self, q=""):
+        tree = self._members_tree
+        for row in tree.get_children(): tree.delete(row)
+        conn = get_conn()
+        sql = """
+            SELECT m.id,m.name,m.email,m.phone,m.joined,
+                   COUNT(i.id) as active
+            FROM members m
+            LEFT JOIN issues i ON i.member_id=m.id AND i.return_date IS NULL
+        """
+        if q and q != "Search members…":
+            rows = conn.execute(sql + " WHERE m.name LIKE ? OR m.email LIKE ?"
+                                " GROUP BY m.id", (f"%{q}%",)*2).fetchall()
+        else:
+            rows = conn.execute(sql + " GROUP BY m.id").fetchall()
+        conn.close()
+        for idx, r in enumerate(rows):
+            tag = "odd" if idx%2==0 else "even"
+            tree.insert("", "end",
+                        values=(r[0], r[1], r[2] or "—", r[3] or "—", r[4], r[5]),
+                        tags=(tag,))
+
+    def _member_row_action(self, event):
+        tree = self._members_tree
+        item = tree.focus()
+        if not item: return
+        vals = tree.item(item)["values"]
+        member_id = vals[0]
+        menu = tk.Menu(self, tearoff=0, bg=CARD, fg=TEXT,
+                       activebackground=ACCENT, activeforeground=BG)
+        menu.add_command(label="✏️  Edit",   command=lambda: self._edit_member_dialog(member_id))
+        menu.add_command(label="🗑  Delete", command=lambda: self._delete_member(member_id))
+        menu.post(event.x_root, event.y_root)
+
+    def _add_member_dialog(self): self._member_form_dialog("Add New Member")
+
+    def _edit_member_dialog(self, member_id):
+        conn = get_conn()
+        r = conn.execute("SELECT * FROM members WHERE id=?", (member_id,)).fetchone()
+        conn.close()
+        if r: self._member_form_dialog("Edit Member", r)
+
+    def _member_form_dialog(self, title, data=None):
+        dlg = tk.Toplevel(self)
+        dlg.title(title); dlg.configure(bg=CARD)
+        dlg.resizable(False, False); dlg.grab_set()
+        dlg.geometry(f"400x320+{self.winfo_x()+390}+{self.winfo_y()+180}")
+
+        label(dlg, title, font=FONT_H2).pack(pady=(20,10))
+        fields = [("Name*", "name"), ("Email", "email"), ("Phone", "phone")]
+        vars_ = {}
+        form = tk.Frame(dlg, bg=CARD); form.pack(padx=30, fill="x")
+        for i, (lbl, key) in enumerate(fields):
+            tk.Label(form, text=lbl, bg=CARD, fg=SUBTEXT, font=FONT_SM).grid(row=i, column=0, sticky="w", pady=6)
+            v = tk.StringVar()
+            if data: v.set(data[i+1] if data[i+1] else "")
+            entry_field(form, v, 24).grid(row=i, column=1, padx=(10,0), sticky="ew")
+            vars_[key] = v
+
+        def save():
+            n = vars_["name"].get().strip()
+            if not n:
+                messagebox.showwarning("Required", "Name is required.", parent=dlg); return
+            conn = get_conn(); c = conn.cursor()
+            if data:
+                c.execute("UPDATE members SET name=?,email=?,phone=? WHERE id=?",
+                          (n, vars_["email"].get() or None, vars_["phone"].get() or None, data[0]))
+            else:
+                c.execute("INSERT INTO members (name,email,phone) VALUES (?,?,?)",
+                          (n, vars_["email"].get() or None, vars_["phone"].get() or None))
+            conn.commit(); conn.close(); dlg.destroy()
+            self._refresh_members("")
+
+        styled_btn(dlg, "💾  Save", save).pack(pady=18)
+
+    def _delete_member(self, member_id):
+        if messagebox.askyesno("Confirm", "Delete this member?"):
+            conn = get_conn()
+            conn.execute("DELETE FROM members WHERE id=?", (member_id,))
+            conn.commit(); conn.close()
+            self._refresh_members("")
+
+                                                                                 
+
+    def _page_issues(self):
+        page = tk.Frame(self.content, bg=BG)
+        page.pack(fill="both", expand=True, padx=30, pady=20)
+
+        label(page, "Issue / Return Books", font=FONT_H1).pack(anchor="w")
+        label(page, "Issue a book to a member, or record a return.", fg=SUBTEXT).pack(anchor="w")
+        tk.Frame(page, bg=BORDER, height=1).pack(fill="x", pady=14)
+
+        cols_frame = tk.Frame(page, bg=BG)
+        cols_frame.pack(fill="x")
+
+                           
+        issue_card = card_frame(cols_frame, padx=24, pady=20)
+        issue_card.pack(side="left", fill="both", expand=True, padx=(0,10))
+        label(issue_card, "📤  Issue Book", font=FONT_H2).pack(anchor="w", pady=(0,12))
+
+        conn = get_conn()
+        books_avail = conn.execute(
+            "SELECT id, title FROM books WHERE available > 0").fetchall()
+        members_all = conn.execute(
+            "SELECT id, name FROM members").fetchall()
+        conn.close()
+
+        book_opts   = [f"[{r[0]}] {r[1]}" for r in books_avail]
+        member_opts = [f"[{r[0]}] {r[1]}" for r in members_all]
+
+        self._issue_book_var   = tk.StringVar()
+        self._issue_member_var = tk.StringVar()
+        self._issue_days_var   = tk.StringVar(value="14")
+
+        for lbl_txt, var, opts in [
+            ("Book", self._issue_book_var, book_opts),
+            ("Member", self._issue_member_var, member_opts),
+        ]:
+            tk.Label(issue_card, text=lbl_txt, bg=CARD, fg=SUBTEXT, font=FONT_SM).pack(anchor="w")
+            combo_field(issue_card, opts, var, 34).pack(anchor="w", pady=(2,10))
+
+        tk.Label(issue_card, text="Loan Days", bg=CARD, fg=SUBTEXT, font=FONT_SM).pack(anchor="w")
+        entry_field(issue_card, self._issue_days_var, 10).pack(anchor="w", pady=(2,14))
+        styled_btn(issue_card, "📤  Issue Book", self._issue_book, ACCENT2, BG).pack(anchor="w")
+
+                            
+        ret_card = card_frame(cols_frame, padx=24, pady=20)
+        ret_card.pack(side="right", fill="both", expand=True, padx=(10,0))
+        label(ret_card, "📥  Return Book", font=FONT_H2).pack(anchor="w", pady=(0,12))
+
+        conn = get_conn()
+        active = conn.execute("""
+            SELECT i.id, b.title, m.name, i.due_date
+            FROM issues i
+            JOIN books b ON b.id=i.book_id
+            JOIN members m ON m.id=i.member_id
+            WHERE i.return_date IS NULL
+            ORDER BY i.due_date
+        """).fetchall()
+        conn.close()
+
+        ret_opts = [f"[{r[0]}] {r[1]} — {r[2]} (due {r[3]})" for r in active]
+        self._return_issue_var = tk.StringVar()
+        tk.Label(ret_card, text="Active Issue", bg=CARD, fg=SUBTEXT, font=FONT_SM).pack(anchor="w")
+        combo_field(ret_card, ret_opts, self._return_issue_var, 38).pack(anchor="w", pady=(2,14))
+        styled_btn(ret_card, "📥  Record Return", self._return_book, ACCENT, TEXT).pack(anchor="w")
+
+    def _issue_book(self):
+        b = self._issue_book_var.get()
+        m = self._issue_member_var.get()
+        d = self._issue_days_var.get()
+        if not b or not m:
+            messagebox.showwarning("Select", "Please select a book and a member."); return
+        try: days = int(d)
+        except: days = 14
+        book_id   = int(b.split("]")[0][1:])
+        member_id = int(m.split("]")[0][1:])
+        due = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+        conn = get_conn(); c = conn.cursor()
+        c.execute("INSERT INTO issues (book_id,member_id,due_date) VALUES (?,?,?)",
+                  (book_id, member_id, due))
+        c.execute("UPDATE books SET available=available-1 WHERE id=?", (book_id,))
+        conn.commit(); conn.close()
+        messagebox.showinfo("Success", f"Book issued! Due: {due}")
+        self._show_page("issues", self._page_issues)
+
+    def _return_book(self):
+        sel = self._return_issue_var.get()
+        if not sel:
+            messagebox.showwarning("Select", "Please select an issue to return."); return
+        issue_id = int(sel.split("]")[0][1:])
+        conn = get_conn(); c = conn.cursor()
+        r = c.execute("SELECT book_id FROM issues WHERE id=?", (issue_id,)).fetchone()
+        if r:
+            c.execute("UPDATE issues SET return_date=date('now') WHERE id=?", (issue_id,))
+            c.execute("UPDATE books SET available=available+1 WHERE id=?", (r[0],))
+            conn.commit()
+        conn.close()
+        messagebox.showinfo("Success", "Book returned successfully!")
+        self._show_page("issues", self._page_issues)
+
+                                                                                 
+
+    def _page_history(self):
+        page = tk.Frame(self.content, bg=BG)
+        page.pack(fill="both", expand=True, padx=30, pady=20)
+
+        hdr = tk.Frame(page, bg=BG); hdr.pack(fill="x")
+        label(hdr, "Issue History", font=FONT_H1).pack(side="left")
+
+        sf = tk.Frame(page, bg=BG); sf.pack(fill="x", pady=10)
+        self._hist_filter = tk.StringVar()
+        fo = combo_field(sf, ["All", "Active", "Returned", "Overdue"], self._hist_filter, 14)
+        fo.set("All"); fo.pack(side="left")
+        styled_btn(sf, "Filter", lambda: self._refresh_history(self._hist_filter.get()),
+                   ACCENT2, BG).pack(side="left", padx=8)
+
+        cols = ("#", "Book", "Member", "Issued", "Due", "Returned", "Status")
+        widths = (40, 230, 150, 100, 100, 100, 90)
+        self._history_tree = build_tree(page, cols, widths)
+        self._refresh_history("All")
+
+    def _refresh_history(self, filt="All"):
+        tree = self._history_tree
+        for r in tree.get_children(): tree.delete(r)
+        conn = get_conn()
+        rows = conn.execute("""
+            SELECT i.id, b.title, m.name, i.issue_date, i.due_date, i.return_date
+            FROM issues i
+            JOIN books b ON b.id=i.book_id
+            JOIN members m ON m.id=i.member_id
+            ORDER BY i.id DESC
+        """).fetchall()
+        conn.close()
+        today = datetime.now().strftime("%Y-%m-%d")
+        for idx, r in enumerate(rows):
+            status = ("Returned" if r[5] else
+                      ("Overdue"  if r[4] and r[4] < today else "Active"))
+            if filt == "Active"   and status != "Active":   continue
+            if filt == "Returned" and status != "Returned": continue
+            if filt == "Overdue"  and status != "Overdue":  continue
+            tag = "odd" if idx%2==0 else "even"
+            tree.insert("", "end",
+                        values=(r[0], r[1], r[2], r[3], r[4] or "—",
+                                r[5] or "—", status),
+                        tags=(tag,))
+
+                                                                                
+
+if __name__ == "__main__":
+    app = LibraryApp()
+    app.mainloop()
